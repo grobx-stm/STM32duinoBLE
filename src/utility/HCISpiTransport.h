@@ -22,13 +22,7 @@
 
 #include "HCITransport.h"
 #include "SPI.h"
-
-typedef enum BLEChip_s {
-  SPBTLE_RF,
-  SPBTLE_1S,
-  BLUENRG_M2SP,
-  BLUENRG_M0
-} BLEChip_t;
+#include "BLEChip.h"
 
 #ifndef BLE_SPI_BYTE_ORDER
   #define BLE_SPI_BYTE_ORDER  MSBFIRST
@@ -52,15 +46,6 @@ class HCISpiTransportClass : public HCITransportInterface {
     virtual size_t write(const uint8_t *data, size_t length);
 
   private:
-    void wait_for_blue_initialize();
-    void wait_for_enable_ll_only();
-    void enable_ll_only();
-    void wait_for_aci_gatt_init();
-    void aci_gatt_init();
-    void wait_for_aci_gap_init();
-    void aci_gap_init();
-    void wait_for_aci_read_config_parameter();
-    void aci_read_config_parameter();
     SPIClass *_spi;
     SPISettings _spiSettings;
     BLEChip_t _ble_chip;
@@ -70,9 +55,6 @@ class HCISpiTransportClass : public HCITransportInterface {
     uint8_t _rxbuff[BLE_MODULE_SPI_BUFFER_SIZE];
     uint16_t _read_index;
     uint16_t _write_index;
-    uint16_t _write_index_initial;
-    uint8_t _initial_phase;
-    uint8_t _random_addr[6];
 };
 
 #endif /* _HCI_SPI_TRANSPORT_H_ */

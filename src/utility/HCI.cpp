@@ -23,54 +23,6 @@
 
 #include "HCI.h"
 
-#define HCI_COMMAND_PKT 0x01
-#define HCI_ACLDATA_PKT 0x02
-#define HCI_EVENT_PKT   0x04
-
-#define EVT_DISCONN_COMPLETE 0x05
-#define EVT_CMD_COMPLETE     0xe
-#define EVT_CMD_STATUS       0x0f
-#define EVT_NUM_COMP_PKTS    0x13
-#define EVT_LE_META_EVENT    0x3e
-
-#define EVT_LE_CONN_COMPLETE      0x01
-#define EVT_LE_ADVERTISING_REPORT 0x02
-
-#define OGF_LINK_CTL           0x01
-#define OGF_HOST_CTL           0x03
-#define OGF_INFO_PARAM         0x04
-#define OGF_STATUS_PARAM       0x05
-#define OGF_LE_CTL             0x08
-
-// OGF_LINK_CTL
-#define OCF_DISCONNECT         0x0006
-
-// OGF_HOST_CTL
-#define OCF_SET_EVENT_MASK     0x0001
-#define OCF_RESET              0x0003
-
-// OGF_INFO_PARAM
-#define OCF_READ_LOCAL_VERSION 0x0001
-#define OCF_READ_BD_ADDR       0x0009
-
-// OGF_STATUS_PARAM
-#define OCF_READ_RSSI          0x0005
-
-// OGF_LE_CTL
-#define OCF_LE_READ_BUFFER_SIZE           0x0002
-#define OCF_LE_SET_RANDOM_ADDRESS         0x0005
-#define OCF_LE_SET_ADVERTISING_PARAMETERS 0x0006
-#define OCF_LE_SET_ADVERTISING_DATA       0x0008
-#define OCF_LE_SET_SCAN_RESPONSE_DATA     0x0009
-#define OCF_LE_SET_ADVERTISE_ENABLE       0x000a
-#define OCF_LE_SET_SCAN_PARAMETERS        0x000b
-#define OCF_LE_SET_SCAN_ENABLE            0x000c
-#define OCF_LE_CREATE_CONN                0x000d
-#define OCF_LE_CANCEL_CONN                0x000e
-#define OCF_LE_CONN_UPDATE                0x0013
-
-#define HCI_OE_USER_ENDED_CONNECTION 0x13
-
 HCIClass::HCIClass() :
   _debug(NULL),
   _recvIndex(0),
