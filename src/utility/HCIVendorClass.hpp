@@ -115,35 +115,21 @@ public:
       _HCITransport->wait(timeout);
     }
 
+    // If it's not an extended event, let HCIClass handle it
+    if (_HCITransport->available()) {
+      byte b = _HCITransport->peek();
+
+      if (b != HCI_EVENT_EXT_PKT) {
+        return HCIClass::poll(0);
+      }
+    }
+
     while (_HCITransport->available()) {
       byte b = _HCITransport->read();
 
       _recvBuffer[_recvIndex++] = b;
 
-      if (_recvBuffer[0] == HCI_ACLDATA_PKT) {
-        if (_recvIndex > 5 && _recvIndex >= (5 + (_recvBuffer[3] + (_recvBuffer[4] << 8)))) {
-          if (_debug) {
-            dumpPkt("HCI ACLDATA RX <- ", _recvIndex, _recvBuffer);
-          }
-
-          int pktLen = _recvIndex - 1;
-          _recvIndex = 0;
-
-          handleAclDataPkt(pktLen, &_recvBuffer[1]);
-        }
-      } else if (_recvBuffer[0] == HCI_EVENT_PKT) {
-        if (_recvIndex > 3 && _recvIndex >= (3 + _recvBuffer[2])) {
-          if (_debug) {
-            dumpPkt("HCI EVENT RX <- ", _recvIndex, _recvBuffer);
-          }
-
-          // received full event
-          int pktLen = _recvIndex - 1;
-          _recvIndex = 0;
-
-          handleEventPkt(pktLen, &_recvBuffer[1]);
-        }
-      } else if (_recvBuffer[0] == HCI_EVENT_EXT_PKT) {
+      // if (_recvBuffer[0] == HCI_EVENT_EXT_PKT) { // _recvBuffer[0] is always HCI_EVENT_EXT_PKT
         if (_recvIndex > 4 && _recvIndex >= (4 + (_recvBuffer[2] + (_recvBuffer[3] << 8)))) {
           if (_debug) {
             dumpPkt("HCI VS EVENT RX <- ", _recvIndex, _recvBuffer);
@@ -154,13 +140,7 @@ public:
 
           handleExtEventPkt(pktLen, &_recvBuffer[1]);
         }
-      } else {
-        _recvIndex = 0;
-
-        if (_debug) {
-          _debug->println(b, HEX);
-        }
-      }
+      // }
     }
   }
 
