@@ -45,6 +45,17 @@ class HCISpiTransportClass : public HCITransportInterface {
 
     virtual size_t write(const uint8_t *data, size_t length);
 
+    const BLEChip_t& ble_chip() { return _ble_chip; }
+    inline int ble_type() {
+      if (_ble_chip == SPBTLE_RF || _ble_chip == BLUENRG_M0) {
+        return 1;
+      } else if (_ble_chip == SPBTLE_1S || _ble_chip == BLUENRG_M2SP || _ble_chip == BLUENRG_LP) {
+        return 2;
+      } else {
+        return 0;
+      }
+    }
+
   private:
     SPIClass *_spi;
     SPISettings _spiSettings;
