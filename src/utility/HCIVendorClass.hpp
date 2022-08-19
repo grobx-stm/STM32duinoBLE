@@ -47,54 +47,64 @@ public:
   {
     int ret = -1;
 
-    // hci reset
-    if (!_first_run) {
+    // We're sure _HCITransport is a HCISpiTransportClass*
+    // should it change, we will need an HCIVendorTransportInterface
+    const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
+
+    if (ble_chip == BLUENRG_LP) {
+      // if it's already running, we should hci reset it
+      if (status == RUNNING) {
+        status = STARTED;
+        ret = HCIClass::reset();
+        if (ret < 0) return -1;
+      }
+
+      // wait for blue initialize
+      poll();
+      if (status != RUNNING) return -2;
+
+      // enable link-layer only
+      uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
+      ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
+      if (ret < 0) return -3;
+
+      // GATT init
+      ret = sendCommand(VS_OPCODE_GATT_INIT);
+      if (ret < 0) return -4;
+
+      // GAP init
+      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
+      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+      if (ret < 0) return -5;
+
+      // READ random address
+      uint8_t read_raddr_params[] = {0x80};
+      ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
+      if (ret < 0) return -6;
+
+      // store random address
+      uint8_t random_address[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+      memcpy(random_address, &_cmdResponse[1], 6);
+
+      // HCI reset
+      status = STARTED;
       ret = HCIClass::reset();
-      if (ret < 0) return -1;
+      if (ret < 0) return -7;
+
+      // wait for blue initialize
+      poll();
+      if (status != RUNNING) return -8;
+
+      // enable link-layer only
+      ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
+      if (ret < 0) return -9;
+
+      // set random address
+      ret = sendCommand(OGF_LE_CTL << 10 | OCF_LE_SET_RANDOM_ADDRESS, sizeof(random_address), random_address);
+      if (ret < 0) return -10;
+    } else {
+      ret = -11;
     }
-    _first_run = false;
-
-    // wait for blue initialize
-    poll();
-
-    // enable link-layer only
-    uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
-    ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
-    if (ret < 0) return -1;
-
-    // GATT init
-    ret = sendCommand(VS_OPCODE_GATT_INIT);
-    if (ret < 0) return -1;
-
-    // GAP init
-    uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
-    ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
-    if (ret < 0) return -1;
-
-    // READ random address
-    uint8_t read_raddr_params[] = {0x80};
-    ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
-    if (ret < 0) return -1;
-
-    // store random address
-    uint8_t random_address[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    memcpy(random_address, &_cmdResponse[1], 6);
-
-    // HCI reset
-    ret = HCIClass::reset();
-    if (ret < 0) return -1;
-
-    // wait for blue initialize
-    poll();
-
-    // enable link-layer only
-    // uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
-    ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
-    if (ret < 0) return -1;
-
-    // set random address
-    ret = sendCommand(OGF_LE_CTL << 10 | OCF_LE_SET_RANDOM_ADDRESS, sizeof(random_address), random_address);
-    if (ret < 0) return -1;
 
     return ret;
   }
@@ -184,8 +194,6 @@ protected:
       }
     }
   }
-
-  bool _first_run = true;
 };
 
 #endif /* _HCI_VENDOR_CLASS_H_ */
