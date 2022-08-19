@@ -23,8 +23,10 @@
 #include "HCI.h"
 #include "BLEChip.h"
 
+#include <limits>
+
 #define HCI_EVENT_EXT_PKT   0x82
-#define OGF_VENDOR_SPECIFIC 0x3F
+// #define OGF_VENDOR_SPECIFIC 0x3F
 #define EVT_VENDOR_SPECIFIC 0xFF
 
 #define VS_EVT_BLUE_INITIALIZE 0x0001
@@ -37,8 +39,8 @@
 class HCIVendorClass: public HCIClass {
   enum {
     STARTED,
-    INITIALIZED
-  } status;
+    RUNNING
+  } status = STARTED;
 
 public:
   virtual int reset()
@@ -153,8 +155,10 @@ public:
   }
 
 protected:
-  virtual void handleExtEventPkt(uint8_t plen, uint8_t pdata[])
+  virtual void handleExtEventPkt(uint16_t plen, uint8_t pdata[])
   {
+    constexpr uint8_t uint8_max = std::numeric_limits<uint8_t>::max();
+
     struct __attribute__ ((packed)) HCIExtEventHdr {
       uint8_t evt;
       uint16_t plen;
@@ -166,12 +170,18 @@ protected:
         struct __attribute__ ((packed)) BlueInitialize {
           uint8_t reason;
         } *blueInitialize = (BlueInitialize*)&pdata[sizeof(HCIExtEventHdr) + 2];
-        if (blueInitialize->reason == 0x00) {
-          status = INITIALIZED;
+        if (blueInitialize->reason == 0x01) { // Firmware started properly
+          status = RUNNING;
         }
       }
-    } else {
+    } else if (eventHdr->plen <= uint8_max) {
+      // if the plen is less than 8b, we can reuse handleEventPkt
       HCIClass::handleEventPkt(plen, pdata);
+    } else {
+      // FIXME: we cant just pass it to handleEventPkt, cause it has more than uint8_max bytes
+      if (_debug) {
+        _debug->printf("Extended event with more than %dB not yet implemented!\r\n", uint8_max);
+      }
     }
   }
 
