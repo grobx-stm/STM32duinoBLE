@@ -110,8 +110,10 @@ public:
 
   virtual void poll(unsigned long timeout = 0UL)
   {
+    const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
+
     // BlueNRG-LP Workaround A: give it some time be ready (should be done after each reset)
-    if (status == STARTED) {
+    if (status == STARTED && ble_chip == BLUENRG_LP) {
       if (_debug) {
         _debug->println("WORKAROUND A: delay");
       }
