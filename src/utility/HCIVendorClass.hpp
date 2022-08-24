@@ -37,28 +37,25 @@
 #define VS_OPCODE_READ_CONF  0xFC0D
 
 class HCIVendorClass: public HCIClass {
-  enum {
-    STARTED,
-    RUNNING
-  } status = STARTED;
-
 public:
   virtual int reset()
   {
-    int ret = -1;
+    int ret = 0;
 
-    // We're sure _HCITransport is a HCISpiTransportClass*
-    // should it change, we will need an HCIVendorTransportInterface
     const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
 
-    if (ble_chip == BLUENRG_LP) {
-      // if it's already running, we should hci reset it
-      if (status == RUNNING) {
-        status = STARTED;
-        ret = HCIClass::reset();
-        if (ret < 0) return -1;
-      }
+    const int ble_type = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_type();
 
+    // if it's already running, we should hci reset it
+    if (status == RUNNING) {
+      _HCITransport->end();
+      (void)_HCITransport->begin();
+      status = STARTED;
+      ret = HCIClass::reset(); // sendCommand(OGF_HOST_CTL << 10 | OCF_RESET)
+      if (ret < 0) return -1;
+    }
+
+    if (ble_type == 1 || ble_chip == BLUENRG_LP) {
       // wait for blue initialize
       poll();
       if (status != RUNNING) return -2;
@@ -67,61 +64,62 @@ public:
       uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
       ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
       if (ret < 0) return -3;
+    } else if (ble_type == 2) {
+      delay(100);
+    } else {
+      return -4;
+    }
 
-      // GATT init
-      ret = sendCommand(VS_OPCODE_GATT_INIT);
-      if (ret < 0) return -4;
-
-      // GAP init
-      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
-      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
-      if (ret < 0) return -5;
-
-      // READ random address
-      uint8_t read_raddr_params[] = {0x80};
-      ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
-      if (ret < 0) return -6;
-
-      // store random address
-      uint8_t random_address[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-      memcpy(random_address, &_cmdResponse[1], 6);
-
-      // HCI reset
-      status = STARTED;
-      ret = HCIClass::reset();
-      if (ret < 0) return -7;
-
-      // wait for blue initialize
-      poll();
-      if (status != RUNNING) return -8;
-
-      // enable link-layer only
-      ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
-      if (ret < 0) return -9;
-
+    // BlueNRG-LP Workaround B part 2: if we already have the random address
+    // just set it then return to avoid looping
+    if (memcmp(random_address, (const uint8_t[]){0x00,0x00,0x00,0x00,0x00,0x00}, 6) != 0) {
       // set random address
       ret = sendCommand(OGF_LE_CTL << 10 | OCF_LE_SET_RANDOM_ADDRESS, sizeof(random_address), random_address);
-      if (ret < 0) return -10;
-    } else {
-      ret = -11;
+      if (ret < 0) return -100;
+      return ret;
+    }
+
+    // GATT init
+    ret = sendCommand(VS_OPCODE_GATT_INIT);
+    if (ret < 0) return -5;
+
+    // GAP init
+    uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
+    ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+    if (ret < 0) return -6;
+
+    // read random address
+    uint8_t read_raddr_params[] = {0x80};
+    ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
+    if (ret < 0) return -7;
+
+    // store random address
+    memcpy(random_address, &_cmdResponse[1], 6);
+
+    // BlueNRG-LP Workaround B part 1: repeat the reset procedure
+    if (ble_chip == BLUENRG_LP) {
+      if (_debug) {
+        _debug->println("WORKAROUND B: repeat reset");
+      }
+      ret = reset();
+      if (ret < 0) return ret * 100;
     }
 
     return ret;
   }
 
-  virtual void poll(unsigned long timeout = 0)
+  virtual void poll(unsigned long timeout = 0UL)
   {
-    if (timeout) {
-      _HCITransport->wait(timeout);
+    // BlueNRG-LP Workaround A: give it some time be ready (should be done after each reset)
+    if (status == STARTED) {
+      if (_debug) {
+        _debug->println("WORKAROUND A: delay");
+      }
+      delay(100);
     }
 
-    // If it's not an extended event, let HCIClass handle it
-    if (_HCITransport->available()) {
-      byte b = _HCITransport->peek();
-
-      if (b != HCI_EVENT_EXT_PKT) {
-        return HCIClass::poll(0);
-      }
+    if (timeout) {
+      _HCITransport->wait(timeout);
     }
 
     while (_HCITransport->available()) {
@@ -129,7 +127,32 @@ public:
 
       _recvBuffer[_recvIndex++] = b;
 
-      // if (_recvBuffer[0] == HCI_EVENT_EXT_PKT) { // _recvBuffer[0] is always HCI_EVENT_EXT_PKT
+      if (_recvBuffer[0] == HCI_ACLDATA_PKT) {
+        if (_recvIndex > 5 && _recvIndex >= (5 + (_recvBuffer[3] + (_recvBuffer[4] << 8)))) {
+          if (_debug) {
+            dumpPkt("HCI ACLDATA RX <- ", _recvIndex, _recvBuffer);
+          }
+
+          int pktLen = _recvIndex - 1;
+          _recvIndex = 0;
+
+          handleAclDataPkt(pktLen, &_recvBuffer[1]);
+          return;
+        }
+      } else if (_recvBuffer[0] == HCI_EVENT_PKT) {
+        if (_recvIndex > 3 && _recvIndex >= (3 + _recvBuffer[2])) {
+          if (_debug) {
+            dumpPkt("HCI EVENT RX <- ", _recvIndex, _recvBuffer);
+          }
+
+          // received full event
+          int pktLen = _recvIndex - 1;
+          _recvIndex = 0;
+
+          handleEventPkt(pktLen, &_recvBuffer[1]);
+          return;
+        }
+      } else if (_recvBuffer[0] == HCI_EVENT_EXT_PKT) {
         if (_recvIndex > 4 && _recvIndex >= (4 + (_recvBuffer[2] + (_recvBuffer[3] << 8)))) {
           if (_debug) {
             dumpPkt("HCI VS EVENT RX <- ", _recvIndex, _recvBuffer);
@@ -139,12 +162,26 @@ public:
           _recvIndex = 0;
 
           handleExtEventPkt(pktLen, &_recvBuffer[1]);
+          return;
         }
-      // }
+      } else {
+        _recvIndex = 0;
+
+        if (_debug) {
+          _debug->println(b, HEX);
+        }
+      }
     }
   }
 
 protected:
+  enum {
+    STARTED,
+    RUNNING
+  } status;
+
+  uint8_t random_address[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
   virtual void handleExtEventPkt(uint16_t plen, uint8_t pdata[])
   {
     constexpr uint8_t uint8_max = std::numeric_limits<uint8_t>::max();
