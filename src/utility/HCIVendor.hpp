@@ -42,10 +42,6 @@ public:
   {
     int ret = 0;
 
-    const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
-
-    const int ble_type = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_type();
-
     // if it's already running, we should hw-reset it
     if (status == RUNNING) {
       _HCITransport->end();
@@ -57,7 +53,7 @@ public:
     ret = HCIClass::reset(); // sendCommand(OGF_HOST_CTL << 10 | OCF_RESET)
     if (ret < 0) return -1;
 
-    if (ble_type == 1 || ble_chip == BLUENRG_LP) {
+    if (ble_type() == 1 || ble_chip() == BLUENRG_LP) {
       // wait for blue initialize
       poll();
       if (status != RUNNING) return -2;
@@ -66,7 +62,7 @@ public:
       uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
       ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
       if (ret < 0) return -3;
-    } else if (ble_type == 2) {
+    } else if (ble_type() == 2) {
       // give the module some time to bootstrap
       delay(100);
     } else {
@@ -87,7 +83,7 @@ public:
     if (ret < 0) return -5;
 
     // GAP init
-    if (ble_chip == BLUENRG_LP) {
+    if (ble_chip() == BLUENRG_LP) {
       uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
       ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
     } else {
@@ -105,7 +101,7 @@ public:
     memcpy(random_address, &_cmdResponse[1], 6);
 
     // BlueNRG-LP Workaround B part 1: repeat the reset procedure
-    if (ble_chip == BLUENRG_LP) {
+    if (ble_chip() == BLUENRG_LP) {
       if (_debug) {
         _debug->println("WORKAROUND B: repeat reset");
       }
@@ -118,10 +114,8 @@ public:
 
   virtual void poll(unsigned long timeout = 0UL)
   {
-    const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
-
     // BlueNRG-LP Workaround A: give it some time be ready (should be done after each reset)
-    if (status == STARTING && ble_chip == BLUENRG_LP) {
+    if (status == STARTING && ble_chip() == BLUENRG_LP) {
       if (_debug) {
         _debug->println("WORKAROUND A: delay");
       }
@@ -242,6 +236,16 @@ protected:
         _debug->printf("Extended event with more than %dB not yet implemented!\r\n", uint8_max);
       }
     }
+  }
+
+  inline BLEChip_t ble_chip()
+  {
+    return static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
+  }
+
+  inline int ble_type()
+  {
+    return static_cast<HCISpiTransportClass*>(_HCITransport)->ble_type();
   }
 };
 
