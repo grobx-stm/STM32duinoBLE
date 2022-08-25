@@ -20,10 +20,11 @@
 #ifndef _HCI_VENDOR_CLASS_H_
 #define _HCI_VENDOR_CLASS_H_
 
+#include "ATT.h"
+#include "GAP.h"
+#include "L2CAPSignaling.h"
 #include "HCI.h"
 #include "BLEChip.h"
-
-#include <limits>
 
 #define HCI_EVENT_EXT_PKT   0x82
 // #define OGF_VENDOR_SPECIFIC 0x3F
@@ -38,75 +39,100 @@
 
 class HCIVendorClass: public HCIClass {
 public:
+  virtual int begin()
+  {
+    status = STARTING;
+    return HCIClass::begin();
+  }
+
   virtual int reset()
   {
     int ret = 0;
 
     // if it's already running, we should hw-reset it
-    if (status == RUNNING) {
-      _HCITransport->end();
-      (void)_HCITransport->begin();
-      status = STARTING;
+    if (status != STARTING) {
+      // _HCITransport->end();
+      // (void)_HCITransport->begin();
+      end();
+      ret = begin();
+      if (ret < 0) return -1;
+    }
+
+    if (ble_type() == 1 || ble_chip() == BLUENRG_LP) {
+      // wait for blue initialize (poll will handle this)
+      poll();
+      if (status != STARTED) return -2;
+    } else if (ble_type() == 2) {
+      // give the module some time to bootstrap
+      delay(300);
+      status = STARTED;
+    } else {
+      return -3;
     }
 
     // hci reset
     ret = HCIClass::reset(); // sendCommand(OGF_HOST_CTL << 10 | OCF_RESET)
-    if (ret < 0) return -1;
+    if (ret < 0) return -4;
+    status = HCIRESET;
+
+    if (ble_chip() == BLUENRG_LP) {
+      // wait for blue initialize (poll will handle this)
+      poll();
+      if (status != STARTED) return -5;
+      status = HCIRESET;
+    }
 
     if (ble_type() == 1 || ble_chip() == BLUENRG_LP) {
-      // wait for blue initialize
-      poll();
-      if (status != RUNNING) return -2;
-
       // enable link-layer only
-      uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
-      ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
-      if (ret < 0) return -3;
-    } else if (ble_type() == 2) {
-      // give the module some time to bootstrap
-      delay(100);
+      const uint8_t ll_only_params[] = {0x2C, 0x01, 0x01};
+      ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), (void*)ll_only_params);
+      if (ret < 0) return -6;
     } else {
-      return -4;
+      // BLE chip was reset: we need to wait for a while
+      delay(300);
     }
 
     // BlueNRG-LP Workaround B part 2: if we already have the random address
     // just set it then return to avoid looping
-    if (memcmp(random_address, (const uint8_t[]){0x00,0x00,0x00,0x00,0x00,0x00}, 6) != 0) {
+    // memcmp(random_address, (const uint8_t[]){0x00,0x00,0x00,0x00,0x00,0x00}, 6) != 0
+    if (ble_chip() == BLUENRG_LP && memcmp(random_address, (const uint8_t[]){0x00,0x00,0x00,0x00,0x00,0x00}, 6) != 0) {
       // set random address
       ret = sendCommand(OGF_LE_CTL << 10 | OCF_LE_SET_RANDOM_ADDRESS, sizeof(random_address), random_address);
       if (ret < 0) return -100;
-      return ret;
-    }
-
-    // GATT init
-    ret = sendCommand(VS_OPCODE_GATT_INIT);
-    if (ret < 0) return -5;
-
-    // GAP init
-    if (ble_chip() == BLUENRG_LP) {
-      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
-      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+      status = RUNNING;
     } else {
-      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00};
-      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
-    }
-    if (ret < 0) return -6;
+      // GATT init
+      ret = sendCommand(VS_OPCODE_GATT_INIT);
+      if (ret < 0) return -7;
 
-    // read random address
-    uint8_t read_raddr_params[] = {0x80};
-    ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
-    if (ret < 0) return -7;
-
-    // store random address
-    memcpy(random_address, &_cmdResponse[1], 6);
-
-    // BlueNRG-LP Workaround B part 1: repeat the reset procedure
-    if (ble_chip() == BLUENRG_LP) {
-      if (_debug) {
-        _debug->println("WORKAROUND B: repeat reset");
+      // GAP init
+      if (ble_chip() == BLUENRG_LP) {
+        uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
+        ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+      } else {
+        uint8_t gap_init_params[] = {0x0F, 0x00, 0x00};
+        ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
       }
-      ret = reset();
-      if (ret < 0) return ret * 100;
+      if (ret < 0) return -8;
+
+      // read random address
+      uint8_t read_raddr_params[] = {0x80};
+      ret = sendCommand(VS_OPCODE_READ_CONF, sizeof(read_raddr_params), &read_raddr_params);
+      if (ret < 0) return -9;
+
+      // store random address
+      memcpy(random_address, &_cmdResponse[1], 6);
+
+      // BlueNRG-LP Workaround B part 1: repeat the reset procedure
+      if (ble_chip() == BLUENRG_LP) {
+        if (_debug) {
+          _debug->println("WORKAROUND B: repeat reset");
+        }
+        ret = reset();
+        if (ret < 0) return ret - 100;
+      }
+
+      status = RUNNING;
     }
 
     return ret;
@@ -115,7 +141,7 @@ public:
   virtual void poll(unsigned long timeout = 0UL)
   {
     // BlueNRG-LP Workaround A: give it some time be ready (should be done after each reset)
-    if (status == STARTING && ble_chip() == BLUENRG_LP) {
+    if (status == STARTED && ble_chip() == BLUENRG_LP) {
       if (_debug) {
         _debug->println("WORKAROUND A: delay");
       }
@@ -150,22 +176,21 @@ public:
           }
 
           // received full event
-          int pktLen = _recvIndex - 1;
           _recvIndex = 0;
 
-          handleEventPkt(pktLen, &_recvBuffer[1]);
+          handleGenericEventPkt<uint8_t>(&_recvBuffer[1]);
           return;
         }
       } else if (_recvBuffer[0] == HCI_EVENT_EXT_PKT) {
         if (_recvIndex > 4 && _recvIndex >= (4 + (_recvBuffer[2] + (_recvBuffer[3] << 8)))) {
           if (_debug) {
-            dumpPkt("HCI VS EVENT RX <- ", _recvIndex, _recvBuffer);
+            dumpPkt("HCI EXT EVENT RX <- ", _recvIndex, _recvBuffer);
           }
 
-          int pktLen = _recvIndex - 1;
+          // received full extended event
           _recvIndex = 0;
 
-          handleExtEventPkt(pktLen, &_recvBuffer[1]);
+          handleGenericEventPkt<uint16_t>(&_recvBuffer[1]);
           return;
         }
       } else {
@@ -180,60 +205,133 @@ public:
 
 protected:
   enum {
-    STARTING,
-    RUNNING
+    STARTING, // just after begin
+    STARTED, // chip started
+    HCIRESET, // hci reset done
+    RUNNING // up and running
   } status;
 
   uint8_t random_address[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-  virtual void handleEventPkt(uint8_t /*plen*/, uint8_t pdata[])
+  template<typename LenTp>
+  void handleGenericEventPkt(uint8_t pdata[])
   {
     struct __attribute__ ((packed)) HCIEventHdr {
       uint8_t evt;
-      uint8_t plen;
+      LenTp plen;
     } *eventHdr = (HCIEventHdr*)pdata;
 
-    if (eventHdr->evt == EVT_VENDOR_SPECIFIC) {
+    if (eventHdr->evt == EVT_DISCONN_COMPLETE) {
+      struct __attribute__ ((packed)) DisconnComplete {
+        uint8_t status;
+        uint16_t handle;
+        uint8_t reason;
+      } *disconnComplete = (DisconnComplete*)&pdata[sizeof(HCIEventHdr)];
+
+      ATT.removeConnection(disconnComplete->handle, disconnComplete->reason);
+      L2CAPSignaling.removeConnection(disconnComplete->handle, disconnComplete->reason);
+
+      if(GAP.advertising()) {
+        HCI.leSetAdvertiseEnable(0x01);
+      }
+    } else if (eventHdr->evt == EVT_CMD_COMPLETE) {
+      struct __attribute__ ((packed)) CmdComplete {
+        uint8_t ncmd;
+        uint16_t opcode;
+        uint8_t status;
+      } *cmdCompleteHeader = (CmdComplete*)&pdata[sizeof(HCIEventHdr)];
+
+      _cmdCompleteOpcode = cmdCompleteHeader->opcode;
+      _cmdCompleteStatus = cmdCompleteHeader->status;
+      _cmdResponseLen = eventHdr->plen - sizeof(CmdComplete);
+      _cmdResponse = &pdata[sizeof(HCIEventHdr) + sizeof(CmdComplete)];
+
+    } else if (eventHdr->evt == EVT_CMD_STATUS) {
+      struct __attribute__ ((packed)) CmdStatus {
+        uint8_t status;
+        uint8_t ncmd;
+        uint16_t opcode;
+      } *cmdStatusHeader = (CmdStatus*)&pdata[sizeof(HCIEventHdr)];
+
+      _cmdCompleteOpcode = cmdStatusHeader->opcode;
+      _cmdCompleteStatus = cmdStatusHeader->status;
+      _cmdResponseLen = 0;
+    } else if (eventHdr->evt == EVT_NUM_COMP_PKTS) {
+      uint8_t numHandles = pdata[sizeof(HCIEventHdr)];
+      uint16_t* data = (uint16_t*)&pdata[sizeof(HCIEventHdr) + sizeof(numHandles)];
+
+      for (uint8_t i = 0; i < numHandles; i++) {
+        handleNumCompPkts(data[0], data[1]);
+
+        data += 2;
+      }
+    } else if (eventHdr->evt == EVT_LE_META_EVENT) {
+      struct __attribute__ ((packed)) LeMetaEventHeader {
+        uint8_t subevent;
+      } *leMetaHeader = (LeMetaEventHeader*)&pdata[sizeof(HCIEventHdr)];
+
+      if (leMetaHeader->subevent == EVT_LE_CONN_COMPLETE) {
+        struct __attribute__ ((packed)) EvtLeConnectionComplete {
+          uint8_t status;
+          uint16_t handle;
+          uint8_t role;
+          uint8_t peerBdaddrType;
+          uint8_t peerBdaddr[6];
+          uint16_t interval;
+          uint16_t latency;
+          uint16_t supervisionTimeout;
+          uint8_t masterClockAccuracy;
+        } *leConnectionComplete = (EvtLeConnectionComplete*)&pdata[sizeof(HCIEventHdr) + sizeof(LeMetaEventHeader)];
+      
+        if (leConnectionComplete->status == 0x00) {
+          ATT.addConnection(leConnectionComplete->handle,
+                            leConnectionComplete->role,
+                            leConnectionComplete->peerBdaddrType,
+                            leConnectionComplete->peerBdaddr,
+                            leConnectionComplete->interval,
+                            leConnectionComplete->latency,
+                            leConnectionComplete->supervisionTimeout,
+                            leConnectionComplete->masterClockAccuracy);
+
+          L2CAPSignaling.addConnection(leConnectionComplete->handle,
+                                leConnectionComplete->role,
+                                leConnectionComplete->peerBdaddrType,
+                                leConnectionComplete->peerBdaddr,
+                                leConnectionComplete->interval,
+                                leConnectionComplete->latency,
+                                leConnectionComplete->supervisionTimeout,
+                                leConnectionComplete->masterClockAccuracy);
+        }
+      } else if (leMetaHeader->subevent == EVT_LE_ADVERTISING_REPORT) {
+        struct __attribute__ ((packed)) EvtLeAdvertisingReport {
+          uint8_t status;
+          uint8_t type;
+          uint8_t peerBdaddrType;
+          uint8_t peerBdaddr[6];
+          uint8_t eirLength;
+          uint8_t eirData[31];
+        } *leAdvertisingReport = (EvtLeAdvertisingReport*)&pdata[sizeof(HCIEventHdr) + sizeof(LeMetaEventHeader)];
+
+        if (leAdvertisingReport->status == 0x01) {
+          // last byte is RSSI
+          int8_t rssi = leAdvertisingReport->eirData[leAdvertisingReport->eirLength];
+
+          GAP.handleLeAdvertisingReport(leAdvertisingReport->type,
+                                        leAdvertisingReport->peerBdaddrType,
+                                        leAdvertisingReport->peerBdaddr,
+                                        leAdvertisingReport->eirLength,
+                                        leAdvertisingReport->eirData,
+                                        rssi);
+
+        }
+      }
+    } else if (eventHdr->evt == EVT_VENDOR_SPECIFIC) {
       uint16_t ecode = pdata[sizeof(HCIEventHdr)];
       if (ecode == VS_EVT_BLUE_INITIALIZE) {
-        struct __attribute__ ((packed)) BlueInitialize {
-          uint8_t reason;
-        } *blueInitialize = (BlueInitialize*)&pdata[sizeof(HCIEventHdr) + 2];
-        if (blueInitialize->reason == 0x01) { // Firmware started properly
-          status = RUNNING;
+        uint8_t reason = pdata[sizeof(HCIEventHdr) + 2];
+        if (reason == 0x01) {
+          status = STARTED;
         }
-      }
-    } else {
-      HCIClass::handleEventPkt(eventHdr->plen, pdata);
-    }
-  }
-
-  virtual void handleExtEventPkt(uint16_t /*plen*/, uint8_t pdata[])
-  {
-    constexpr uint8_t uint8_max = std::numeric_limits<uint8_t>::max();
-
-    struct __attribute__ ((packed)) HCIExtEventHdr {
-      uint8_t evt;
-      uint16_t plen;
-    } *eventHdr = (HCIExtEventHdr*)pdata;
-
-    if (eventHdr->evt == EVT_VENDOR_SPECIFIC) {
-      uint16_t ecode = pdata[sizeof(HCIExtEventHdr)];
-      if (ecode == VS_EVT_BLUE_INITIALIZE) {
-        struct __attribute__ ((packed)) BlueInitialize {
-          uint8_t reason;
-        } *blueInitialize = (BlueInitialize*)&pdata[sizeof(HCIExtEventHdr) + 2];
-        if (blueInitialize->reason == 0x01) { // Firmware started properly
-          status = RUNNING;
-        }
-      }
-    } else if (eventHdr->plen <= uint8_max) {
-      // if the plen is less than 8b, we can reuse handleEventPkt
-      HCIClass::handleEventPkt(eventHdr->plen, pdata);
-    } else {
-      // FIXME: we cant just pass it to handleEventPkt, cause it has more than uint8_max bytes
-      if (_debug) {
-        _debug->printf("Extended event with more than %dB not yet implemented!\r\n", uint8_max);
       }
     }
   }

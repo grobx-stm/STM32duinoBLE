@@ -44,6 +44,8 @@ extern "C" void SPI_Irq_Callback(void)
 
 int HCISpiTransportClass::begin()
 {
+  data_avail = 0;
+  
   _read_index = 0;
   _write_index = 0;
   memset(_rxbuff, 0, sizeof(_rxbuff));
@@ -60,7 +62,7 @@ int HCISpiTransportClass::begin()
   digitalWrite(_ble_rst, LOW);
   delay(5);
   digitalWrite(_ble_rst, HIGH);
-  delay(5);
+  delay(150);
 
   return 1;
 }

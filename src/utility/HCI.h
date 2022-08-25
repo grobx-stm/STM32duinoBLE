@@ -138,7 +138,7 @@ protected:
 
   uint16_t _cmdCompleteOpcode;
   int _cmdCompleteStatus;
-  uint8_t _cmdResponseLen;
+  uint16_t _cmdResponseLen;
   uint8_t* _cmdResponse;
 
   uint8_t _maxPkt;

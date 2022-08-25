@@ -49,6 +49,7 @@ public:
 
 protected:
   friend class HCIClass;
+  friend class HCIVendorClass;
 
   virtual void handleLeAdvertisingReport(uint8_t type, uint8_t addressType, uint8_t address[6],
                                   uint8_t eirLength, uint8_t eirData[], int8_t rssi);
