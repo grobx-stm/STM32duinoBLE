@@ -46,14 +46,16 @@ public:
 
     const int ble_type = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_type();
 
-    // if it's already running, we should hci reset it
+    // if it's already running, we should hw-reset it
     if (status == RUNNING) {
       _HCITransport->end();
       (void)_HCITransport->begin();
-      status = STARTED;
-      ret = HCIClass::reset(); // sendCommand(OGF_HOST_CTL << 10 | OCF_RESET)
-      if (ret < 0) return -1;
+      status = STARTING;
     }
+
+    // hci reset
+    ret = HCIClass::reset(); // sendCommand(OGF_HOST_CTL << 10 | OCF_RESET)
+    if (ret < 0) return -1;
 
     if (ble_type == 1 || ble_chip == BLUENRG_LP) {
       // wait for blue initialize
@@ -65,6 +67,7 @@ public:
       ret = sendCommand(VS_OPCODE_WRITE_CONF, sizeof(ll_only_params), &ll_only_params);
       if (ret < 0) return -3;
     } else if (ble_type == 2) {
+      // give the module some time to bootstrap
       delay(100);
     } else {
       return -4;
@@ -84,8 +87,13 @@ public:
     if (ret < 0) return -5;
 
     // GAP init
-    uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
-    ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+    if (ble_chip == BLUENRG_LP) {
+      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00, 0x00};
+      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+    } else {
+      uint8_t gap_init_params[] = {0x0F, 0x00, 0x00};
+      ret = sendCommand(VS_OPCODE_GAP_INIT, sizeof(gap_init_params), &gap_init_params);
+    }
     if (ret < 0) return -6;
 
     // read random address
@@ -113,7 +121,7 @@ public:
     const BLEChip_t ble_chip = static_cast<HCISpiTransportClass*>(_HCITransport)->ble_chip();
 
     // BlueNRG-LP Workaround A: give it some time be ready (should be done after each reset)
-    if (status == STARTED && ble_chip == BLUENRG_LP) {
+    if (status == STARTING && ble_chip == BLUENRG_LP) {
       if (_debug) {
         _debug->println("WORKAROUND A: delay");
       }
@@ -178,13 +186,35 @@ public:
 
 protected:
   enum {
-    STARTED,
+    STARTING,
     RUNNING
   } status;
 
   uint8_t random_address[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-  virtual void handleExtEventPkt(uint16_t plen, uint8_t pdata[])
+  virtual void handleEventPkt(uint8_t /*plen*/, uint8_t pdata[])
+  {
+    struct __attribute__ ((packed)) HCIEventHdr {
+      uint8_t evt;
+      uint8_t plen;
+    } *eventHdr = (HCIEventHdr*)pdata;
+
+    if (eventHdr->evt == EVT_VENDOR_SPECIFIC) {
+      uint16_t ecode = pdata[sizeof(HCIEventHdr)];
+      if (ecode == VS_EVT_BLUE_INITIALIZE) {
+        struct __attribute__ ((packed)) BlueInitialize {
+          uint8_t reason;
+        } *blueInitialize = (BlueInitialize*)&pdata[sizeof(HCIEventHdr) + 2];
+        if (blueInitialize->reason == 0x01) { // Firmware started properly
+          status = RUNNING;
+        }
+      }
+    } else {
+      HCIClass::handleEventPkt(eventHdr->plen, pdata);
+    }
+  }
+
+  virtual void handleExtEventPkt(uint16_t /*plen*/, uint8_t pdata[])
   {
     constexpr uint8_t uint8_max = std::numeric_limits<uint8_t>::max();
 
@@ -205,7 +235,7 @@ protected:
       }
     } else if (eventHdr->plen <= uint8_max) {
       // if the plen is less than 8b, we can reuse handleEventPkt
-      HCIClass::handleEventPkt(plen, pdata);
+      HCIClass::handleEventPkt(eventHdr->plen, pdata);
     } else {
       // FIXME: we cant just pass it to handleEventPkt, cause it has more than uint8_max bytes
       if (_debug) {
