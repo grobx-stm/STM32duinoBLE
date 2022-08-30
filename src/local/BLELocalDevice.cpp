@@ -45,10 +45,11 @@ int BLELocalDevice::begin()
 
   delay(100);
 
-  if (HCI.reset() != 0) {
+  int ret = HCI.reset();
+  if (ret != 0) {
     end();
 
-    return 0;
+    return ret;
   }
 
   uint8_t hciVer;
